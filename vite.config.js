@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
@@ -191,16 +191,50 @@ function mockApi() {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [
-    vue(),
-    vueDevTools(),
-    serveEduAudio(),
-    mockApi(),
-  ],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+// 使用函数形式支持读取环境变量
+export default defineConfig(({ mode }) => {
+  // 加载环境变量
+  const env = loadEnv(mode, process.cwd(), '')
+
+  // 是否启用代理（默认关闭，使用本地 mock 数据）
+  // 设置 USE_PROXY=true 或 VITE_USE_PROXY=true 来启用代理
+  const useProxy = env.USE_PROXY === 'true' || env.VITE_USE_PROXY === 'true'
+
+  // 后端地址（可通过环境变量配置）
+  const backendTarget = env.BACKEND_URL || env.VITE_BACKEND_URL || 'http://192.168.1.106:8080'
+
+  return {
+    plugins: [
+      vue(),
+      vueDevTools(),
+      serveEduAudio(),
+      mockApi(),
+    ],
+    // 开发服务器配置
+    server: {
+      // 允许局域网设备（手机）访问
+      host: '0.0.0.0',
+      port: 5173,
+      // 代理配置：仅当 USE_PROXY=true 时启用
+      proxy: useProxy ? {
+        // API 接口代理
+        '/api': {
+          target: backendTarget,
+          changeOrigin: true,
+          // 路径重写：/api/books -> /books
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+        // 音频文件代理
+        '/audio': {
+          target: backendTarget,
+          changeOrigin: true,
+        },
+      } : undefined,
     },
-  },
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
+    },
+  }
 })

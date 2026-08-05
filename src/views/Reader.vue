@@ -40,8 +40,8 @@
             <div class="progress-fill" :style="{ width: progress + '%' }"></div>
           </div>
           <div class="time-display">
-            <span>{{ currentTime }}</span>
-            <span>{{ totalTime }}</span>
+            <span>{{ currentTimeLabel }}</span>
+            <span>{{ totalTimeLabel }}</span>
           </div>
         </div>
         <!-- 语速控制 -->
@@ -53,7 +53,7 @@
               :key="s"
               class="speed-btn"
               :class="{ active: currentSpeed === s }"
-              @click="currentSpeed = s"
+              @click="changeSpeed(s)"
             >
               {{ s }}x
             </button>
@@ -62,13 +62,14 @@
       </div>
 
       <!-- 句子列表 -->
-      <div class="sentence-list">
+      <div class="sentence-list" ref="listRef">
         <div
           v-for="(sentence, index) in sentences"
           :key="index"
           class="sentence-block"
           :class="{ active: currentIndex === index }"
-          @click="playSentence(index)"
+          :data-index="index"
+          @click="handleSentenceClick(index)"
         >
           <div class="sentence-number">{{ index + 1 }}</div>
           <div class="sentence-content">
@@ -85,9 +86,20 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import request from '../utils/request'
+import {
+  playSegment,
+  stop as stopAudio,
+  pause as pauseAudio,
+  resume as resumeAudio,
+  onTimeUpdate,
+  offTimeUpdate,
+  setPlaybackRate,
+  getCurrentTime,
+  getDuration
+} from '../utils/audioPlayer.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -102,6 +114,9 @@ const audioUrl = ref('')
 const loading = ref(true)
 const error = ref('')
 
+// 音频总时长（毫秒）
+const totalDuration = ref(0)
+
 // 播放状态
 const isPlaying = ref(false)
 const currentIndex = ref(0)
@@ -109,9 +124,15 @@ const currentSpeed = ref('1.0')
 const speeds = ['0.5', '0.75', '1.0', '1.25', '1.5']
 
 // 时间显示
-const currentTime = ref('00:00')
-const totalTime = ref('00:00')
+const currentTimeLabel = ref('00:00')
+const totalTimeLabel = ref('00:00')
 const progress = ref(0)
+
+// 句子列表 DOM 引用
+const listRef = ref(null)
+
+// timeupdate 回调引用（用于解绑）
+let timeUpdateCallback = null
 
 /**
  * 获取课文内容数据
@@ -124,9 +145,17 @@ const fetchContent = async () => {
     if (res.code === 200) {
       const data = res.data
       audioUrl.value = data.audioUrl
-      sentences.value = data.sentences
-      // 格式化总时长
-      totalTime.value = formatTime(data.totalDuration)
+      totalDuration.value = data.totalDuration || 0
+      totalTimeLabel.value = formatTime(totalDuration.value)
+      // 为每个句子计算 endTime（使用下一句的 time 或音频总时长）
+      const rawSentences = data.sentences || []
+      sentences.value = rawSentences.map((s, i) => ({
+        ...s,
+        startTime: s.time,
+        endTime: i < rawSentences.length - 1
+          ? rawSentences[i + 1].time
+          : totalDuration.value
+      }))
     } else {
       error.value = res.message || '获取数据失败'
     }
@@ -153,23 +182,126 @@ const formatTime = (ms) => {
  * 返回上一页
  */
 const goBack = () => {
+  stopAudio()
+  cleanupListeners()
   router.back()
+}
+
+/**
+ * 处理 timeupdate 事件：更新高亮句子、进度条
+ * @param {number} currentTimeMs - 当前播放时间（毫秒）
+ */
+const handleTimeUpdate = (currentTimeMs) => {
+  // 更新进度条
+  if (totalDuration.value > 0) {
+    progress.value = Math.min(100, (currentTimeMs / totalDuration.value) * 100)
+  }
+  currentTimeLabel.value = formatTime(currentTimeMs)
+
+  // 根据当前时间查找对应句子
+  const idx = findSentenceIndex(currentTimeMs)
+  if (idx !== -1 && idx !== currentIndex.value) {
+    currentIndex.value = idx
+    // 自动滚动到当前句子
+    scrollToSentence(idx)
+  }
+}
+
+/**
+ * 根据时间查找对应的句子索引
+ * @param {number} timeMs - 当前时间（毫秒）
+ * @returns {number} 句子索引，未找到返回 -1
+ */
+const findSentenceIndex = (timeMs) => {
+  const list = sentences.value
+  for (let i = 0; i < list.length; i++) {
+    if (timeMs >= list[i].startTime && timeMs < list[i].endTime) {
+      return i
+    }
+  }
+  return -1
+}
+
+/**
+ * 滚动到指定句子
+ * @param {number} index - 句子索引
+ */
+const scrollToSentence = (index) => {
+  nextTick(() => {
+    const container = listRef.value
+    if (!container) return
+    const target = container.querySelector(`[data-index="${index}"]`)
+    if (target) {
+      target.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      })
+    }
+  })
+}
+
+/**
+ * 初始化 timeupdate 监听
+ */
+const initListeners = () => {
+  timeUpdateCallback = handleTimeUpdate
+  onTimeUpdate(timeUpdateCallback)
+}
+
+/**
+ * 清理 timeupdate 监听
+ */
+const cleanupListeners = () => {
+  if (timeUpdateCallback) {
+    offTimeUpdate(timeUpdateCallback)
+    timeUpdateCallback = null
+  }
+}
+
+/**
+ * 点击句子：触发播放 + 高亮 + 滚动
+ * @param {number} index - 句子索引
+ */
+const handleSentenceClick = (index) => {
+  const sentence = sentences.value[index]
+  if (!sentence || !audioUrl.value) return
+
+  // 先停止旧播放，再播放新片段
+  stopAudio()
+  playSegment(audioUrl.value, sentence.startTime)
+
+  // 设置播放状态
+  isPlaying.value = true
+  currentIndex.value = index
+
+  // 设置播放倍速
+  setPlaybackRate(parseFloat(currentSpeed.value))
+
+  // 绑定 timeupdate 监听
+  initListeners()
+
+  // 滚动到该句子
+  scrollToSentence(index)
 }
 
 /**
  * 切换播放/暂停
  */
 const togglePlay = () => {
-  isPlaying.value = !isPlaying.value
-}
-
-/**
- * 播放指定句子
- * @param {number} index - 句子索引
- */
-const playSentence = (index) => {
-  currentIndex.value = index
-  isPlaying.value = true
+  if (isPlaying.value) {
+    pauseAudio()
+    isPlaying.value = false
+  } else {
+    if (audioUrl.value) {
+      // 如果没有在播放任何内容，从当前句子开始
+      if (getCurrentTime() === 0 || getCurrentTime() < sentences.value[currentIndex.value]?.startTime) {
+        handleSentenceClick(currentIndex.value)
+      } else {
+        resumeAudio()
+      }
+    }
+    isPlaying.value = true
+  }
 }
 
 /**
@@ -177,7 +309,7 @@ const playSentence = (index) => {
  */
 const prevSentence = () => {
   if (currentIndex.value > 0) {
-    currentIndex.value--
+    handleSentenceClick(currentIndex.value - 1)
   }
 }
 
@@ -186,12 +318,29 @@ const prevSentence = () => {
  */
 const nextSentence = () => {
   if (currentIndex.value < sentences.value.length - 1) {
-    currentIndex.value++
+    handleSentenceClick(currentIndex.value + 1)
   }
 }
 
+/**
+ * 切换播放速度
+ * @param {string} speed - 倍速值
+ */
+const changeSpeed = (speed) => {
+  currentSpeed.value = speed
+  setPlaybackRate(parseFloat(speed))
+}
+
 // 组件挂载时获取数据
-onMounted(fetchContent)
+onMounted(async () => {
+  await fetchContent()
+})
+
+// 组件卸载时清理资源
+onBeforeUnmount(() => {
+  stopAudio()
+  cleanupListeners()
+})
 </script>
 
 <style scoped>
@@ -325,7 +474,7 @@ onMounted(fetchContent)
   height: 100%;
   background: linear-gradient(90deg, #667eea, #764ba2);
   border-radius: 2px;
-  transition: width 0.3s ease;
+  transition: width 0.1s linear;
 }
 
 .time-display {
@@ -381,6 +530,7 @@ onMounted(fetchContent)
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+  overflow-y: auto;
 }
 
 /* 句子块 */
@@ -395,11 +545,13 @@ onMounted(fetchContent)
   cursor: pointer;
   transition: all 0.2s ease;
   border: 2px solid transparent;
+  scroll-margin: 80px;
 }
 
 .sentence-block.active {
-  border-color: #667eea;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+  border-color: #f5a623;
+  background: linear-gradient(135deg, rgba(255, 214, 102, 0.2) 0%, rgba(255, 165, 0, 0.1) 100%);
+  box-shadow: 0 2px 8px rgba(245, 166, 35, 0.3);
 }
 
 .sentence-block:active {
@@ -422,7 +574,7 @@ onMounted(fetchContent)
 }
 
 .sentence-block.active .sentence-number {
-  background: #667eea;
+  background: #f5a623;
   color: #fff;
 }
 
@@ -442,11 +594,19 @@ onMounted(fetchContent)
   line-height: 1.5;
 }
 
+.sentence-block.active .sentence-en {
+  color: #d48806;
+}
+
 .sentence-zh {
   font-size: 13px;
   color: #999;
   margin: 0;
   line-height: 1.4;
+}
+
+.sentence-block.active .sentence-zh {
+  color: #b36b00;
 }
 
 /* 播放动画 */

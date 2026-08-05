@@ -10,6 +10,10 @@ let audio = null
 let canPlayHandler = null
 let endedHandler = null
 
+// timeupdate 回调列表
+let timeUpdateCallbacks = []
+let timeUpdateHandler = null
+
 /**
  * 获取全局唯一的 Audio 对象
  * @returns {HTMLAudioElement} Audio 实例
@@ -44,6 +48,8 @@ export function playSegment(audioUrl, startTime = 0) {
     player.play().catch((err) => {
       console.warn('播放失败:', err)
     })
+    // 注册 timeupdate 监听
+    ensureTimeUpdateHandler()
   }
 
   // 播放结束释放资源
@@ -54,6 +60,26 @@ export function playSegment(audioUrl, startTime = 0) {
 
   player.addEventListener('canplay', canPlayHandler, { once: true })
   player.addEventListener('ended', endedHandler, { once: true })
+}
+
+/**
+ * 确保 timeupdate 事件处理器已注册
+ */
+function ensureTimeUpdateHandler() {
+  if (!timeUpdateHandler && audio) {
+    timeUpdateHandler = () => {
+      // 将当前时间（毫秒）传递给所有回调
+      const currentTimeMs = audio.currentTime * 1000
+      timeUpdateCallbacks.forEach((cb) => {
+        try {
+          cb(currentTimeMs)
+        } catch (e) {
+          console.error('timeupdate callback error:', e)
+        }
+      })
+    }
+    audio.addEventListener('timeupdate', timeUpdateHandler)
+  }
 }
 
 /**
@@ -69,6 +95,11 @@ export function stop() {
     if (endedHandler) {
       audio.removeEventListener('ended', endedHandler)
       endedHandler = null
+    }
+    // 移除 timeupdate 监听
+    if (timeUpdateHandler) {
+      audio.removeEventListener('timeupdate', timeUpdateHandler)
+      timeUpdateHandler = null
     }
     audio.pause()
     audio.currentTime = 0
@@ -140,5 +171,27 @@ export function setPlaybackRate(rate) {
 export function onEnded(callback) {
   if (audio && typeof callback === 'function') {
     audio.addEventListener('ended', callback)
+  }
+}
+
+/**
+ * 注册 timeupdate 回调
+ * @param {Function} callback - 回调函数，接收当前播放时间（毫秒）作为参数
+ */
+export function onTimeUpdate(callback) {
+  if (typeof callback === 'function') {
+    timeUpdateCallbacks.push(callback)
+  }
+}
+
+/**
+ * 移除指定的 timeupdate 回调
+ * @param {Function} callback - 要移除的回调函数引用；若不传则清空所有回调
+ */
+export function offTimeUpdate(callback) {
+  if (callback) {
+    timeUpdateCallbacks = timeUpdateCallbacks.filter((cb) => cb !== callback)
+  } else {
+    timeUpdateCallbacks = []
   }
 }
