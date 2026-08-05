@@ -10,78 +10,97 @@
       <button class="menu-btn">⋯</button>
     </header>
 
-    <!-- 音频控制条 -->
-    <div class="audio-bar">
-      <!-- 播放控制 -->
-      <div class="audio-controls">
-        <button class="ctrl-btn" @click="prevSentence">
-          <span class="ctrl-icon">⏮</span>
-        </button>
-        <button class="play-btn" @click="togglePlay">
-          <span class="play-icon">{{ isPlaying ? '⏸' : '▶' }}</span>
-        </button>
-        <button class="ctrl-btn" @click="nextSentence">
-          <span class="ctrl-icon">⏭</span>
-        </button>
-      </div>
-      <!-- 进度条 -->
-      <div class="progress-wrap">
-        <div class="progress-bar">
-          <div class="progress-fill" :style="{ width: progress + '%' }"></div>
-        </div>
-        <div class="time-display">
-          <span>{{ currentTime }}</span>
-          <span>{{ totalTime }}</span>
-        </div>
-      </div>
-      <!-- 语速控制 -->
-      <div class="speed-control">
-        <span class="speed-label">速度</span>
-        <div class="speed-options">
-          <button
-            v-for="s in speeds"
-            :key="s"
-            class="speed-btn"
-            :class="{ active: currentSpeed === s }"
-            @click="currentSpeed = s"
-          >
-            {{ s }}x
-          </button>
-        </div>
-      </div>
+    <!-- 加载中状态 -->
+    <div v-if="loading" class="loading">加载中...</div>
+
+    <!-- 错误状态 -->
+    <div v-else-if="error" class="error">
+      <p>{{ error }}</p>
+      <button class="retry-btn" @click="fetchContent">重试</button>
     </div>
 
-    <!-- 句子列表 -->
-    <div class="sentence-list">
-      <div
-        v-for="(sentence, index) in sentences"
-        :key="index"
-        class="sentence-block"
-        :class="{ active: currentIndex === index }"
-        @click="playSentence(index)"
-      >
-        <div class="sentence-number">{{ index + 1 }}</div>
-        <div class="sentence-content">
-          <p class="sentence-en">{{ sentence.en }}</p>
-          <p class="sentence-zh">{{ sentence.zh }}</p>
+    <template v-else>
+      <!-- 音频控制条 -->
+      <div class="audio-bar">
+        <!-- 播放控制 -->
+        <div class="audio-controls">
+          <button class="ctrl-btn" @click="prevSentence">
+            <span class="ctrl-icon">⏮</span>
+          </button>
+          <button class="play-btn" @click="togglePlay">
+            <span class="play-icon">{{ isPlaying ? '⏸' : '▶' }}</span>
+          </button>
+          <button class="ctrl-btn" @click="nextSentence">
+            <span class="ctrl-icon">⏭</span>
+          </button>
         </div>
-        <div class="sentence-play" v-if="currentIndex === index && isPlaying">
-          <span class="playing-animation">🔊</span>
+        <!-- 进度条 -->
+        <div class="progress-wrap">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+          </div>
+          <div class="time-display">
+            <span>{{ currentTime }}</span>
+            <span>{{ totalTime }}</span>
+          </div>
+        </div>
+        <!-- 语速控制 -->
+        <div class="speed-control">
+          <span class="speed-label">速度</span>
+          <div class="speed-options">
+            <button
+              v-for="s in speeds"
+              :key="s"
+              class="speed-btn"
+              :class="{ active: currentSpeed === s }"
+              @click="currentSpeed = s"
+            >
+              {{ s }}x
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      <!-- 句子列表 -->
+      <div class="sentence-list">
+        <div
+          v-for="(sentence, index) in sentences"
+          :key="index"
+          class="sentence-block"
+          :class="{ active: currentIndex === index }"
+          @click="playSentence(index)"
+        >
+          <div class="sentence-number">{{ index + 1 }}</div>
+          <div class="sentence-content">
+            <p class="sentence-en">{{ sentence.en }}</p>
+            <p class="sentence-zh">{{ sentence.zh }}</p>
+          </div>
+          <div class="sentence-play" v-if="currentIndex === index && isPlaying">
+            <span class="playing-animation">🔊</span>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import request from '../utils/request'
 
 const router = useRouter()
 const route = useRoute()
 
-// 从路由参数获取单元标题
+// 从路由参数获取单元 ID 和标题
+const unitId = computed(() => route.query.unit || 1)
 const unitTitle = computed(() => route.query.title || 'Unit 1')
+
+// 响应式数据
+const sentences = ref([])
+const audioUrl = ref('')
+const loading = ref(true)
+const error = ref('')
 
 // 播放状态
 const isPlaying = ref(false)
@@ -91,22 +110,44 @@ const speeds = ['0.5', '0.75', '1.0', '1.25', '1.5']
 
 // 时间显示
 const currentTime = ref('00:00')
-const totalTime = ref('03:24')
+const totalTime = ref('00:00')
 const progress = ref(0)
 
-// 句子列表静态数据
-const sentences = ref([
-  { en: 'Hello!', zh: '你好！' },
-  { en: 'Hi, Mike!', zh: '嗨，迈克！' },
-  { en: 'Let\'s go to school.', zh: '我们去上学吧。' },
-  { en: 'OK, let\'s go!', zh: '好的，走吧！' },
-  { en: 'Look at the teacher.', zh: '看老师。' },
-  { en: 'Good morning, class.', zh: '早上好，同学们。' },
-  { en: 'Good morning, teacher.', zh: '早上好，老师。' },
-  { en: 'Nice to meet you.', zh: '很高兴见到你。' },
-  { en: 'Nice to meet you, too.', zh: '我也很高兴见到你。' },
-  { en: 'Let\'s play together.', zh: '让我们一起玩吧。' }
-])
+/**
+ * 获取课文内容数据
+ */
+const fetchContent = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await request.get(`/content/${unitId.value}`)
+    if (res.code === 200) {
+      const data = res.data
+      audioUrl.value = data.audioUrl
+      sentences.value = data.sentences
+      // 格式化总时长
+      totalTime.value = formatTime(data.totalDuration)
+    } else {
+      error.value = res.message || '获取数据失败'
+    }
+  } catch (err) {
+    error.value = err.message || '网络异常，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
+
+/**
+ * 将毫秒数格式化为 mm:ss
+ * @param {number} ms - 毫秒数
+ * @returns {string} 格式化后的时间字符串
+ */
+const formatTime = (ms) => {
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
 
 /**
  * 返回上一页
@@ -148,6 +189,9 @@ const nextSentence = () => {
     currentIndex.value++
   }
 }
+
+// 组件挂载时获取数据
+onMounted(fetchContent)
 </script>
 
 <style scoped>
@@ -420,5 +464,39 @@ const nextSentence = () => {
 @keyframes pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.2); }
+}
+
+/* 加载中状态 */
+.loading {
+  text-align: center;
+  padding: 60px 0;
+  font-size: 14px;
+  color: #999;
+}
+
+/* 错误状态 */
+.error {
+  text-align: center;
+  padding: 60px 0;
+  color: #e74c3c;
+}
+
+.error p {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.retry-btn {
+  padding: 8px 24px;
+  background: #667eea;
+  color: #fff;
+  border-radius: 20px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+}
+
+.retry-btn:active {
+  background: #5568d3;
 }
 </style>

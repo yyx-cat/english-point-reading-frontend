@@ -7,8 +7,17 @@
       <p class="page-subtitle">选择课本开始学习</p>
     </header>
 
+    <!-- 加载中状态 -->
+    <div v-if="loading" class="loading">加载中...</div>
+
+    <!-- 错误状态 -->
+    <div v-else-if="error" class="error">
+      <p>{{ error }}</p>
+      <button class="retry-btn" @click="fetchBooks">重试</button>
+    </div>
+
     <!-- 课本卡片列表 -->
-    <div class="book-cards">
+    <div v-else class="book-cards">
       <div
         v-for="book in books"
         :key="book.id"
@@ -29,40 +38,48 @@
 </template>
 
 <script setup>
-// 课本列表静态数据
-const books = [
-  {
-    id: 1,
-    name: '六年级上册',
-    desc: '人教版 PEP · 三年级起点',
-    emoji: '📘',
-    coverColor: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-  },
-  {
-    id: 2,
-    name: '六年级下册',
-    desc: '人教版 PEP · 三年级起点',
-    emoji: '📗',
-    coverColor: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'
-  },
-  {
-    id: 3,
-    name: '五年级上册',
-    desc: '人教版 PEP · 三年级起点',
-    emoji: '📙',
-    coverColor: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import request from '../utils/request'
+
+const router = useRouter()
+
+// 响应式数据
+const books = ref([])
+const loading = ref(true)
+const error = ref('')
+
+/**
+ * 获取课本列表数据
+ */
+const fetchBooks = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await request.get('/books')
+    // 后端返回格式：{ code: 200, data: [...] }
+    if (res.code === 200) {
+      books.value = res.data
+    } else {
+      error.value = res.message || '获取数据失败'
+    }
+  } catch (err) {
+    error.value = err.message || '网络异常，请稍后重试'
+  } finally {
+    loading.value = false
   }
-]
+}
 
 /**
  * 跳转到单元列表页
  * @param {Object} book - 选中的课本对象
  */
-const emit = defineEmits([])
 const goToUnits = (book) => {
-  // 通过路由跳转到单元列表
-  window.location.hash = `#/units?book=${book.id}`
+  router.push({ path: '/units', query: { book: book.id } })
 }
+
+// 组件挂载时获取数据
+onMounted(fetchBooks)
 </script>
 
 <style scoped>
@@ -160,5 +177,39 @@ const goToUnits = (book) => {
   color: #667eea;
   font-weight: 500;
   margin-top: 4px;
+}
+
+/* 加载中状态 */
+.loading {
+  text-align: center;
+  padding: 60px 0;
+  font-size: 14px;
+  color: #999;
+}
+
+/* 错误状态 */
+.error {
+  text-align: center;
+  padding: 60px 0;
+  color: #e74c3c;
+}
+
+.error p {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.retry-btn {
+  padding: 8px 24px;
+  background: #667eea;
+  color: #fff;
+  border-radius: 20px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+}
+
+.retry-btn:active {
+  background: #5568d3;
 }
 </style>

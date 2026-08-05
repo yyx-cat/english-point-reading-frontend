@@ -6,12 +6,21 @@
       <button class="back-btn" @click="goBack">
         <span class="back-icon">←</span>
       </button>
-      <h1 class="nav-title">六年级上册</h1>
+      <h1 class="nav-title">{{ bookName }}</h1>
       <div class="nav-placeholder"></div>
     </header>
 
+    <!-- 加载中状态 -->
+    <div v-if="loading" class="loading">加载中...</div>
+
+    <!-- 错误状态 -->
+    <div v-else-if="error" class="error">
+      <p>{{ error }}</p>
+      <button class="retry-btn" @click="fetchUnits">重试</button>
+    </div>
+
     <!-- 单元列表 -->
-    <div class="unit-cards">
+    <div v-else class="unit-cards">
       <div
         v-for="unit in units"
         :key="unit.id"
@@ -32,19 +41,42 @@
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import request from '../utils/request'
 
 const router = useRouter()
+const route = useRoute()
 
-// 单元列表静态数据
-const units = [
-  { id: 1, number: 'Unit 1', title: 'Hello', topic: '你好' },
-  { id: 2, number: 'Unit 2', title: 'Colours', topic: '颜色' },
-  { id: 3, number: 'Unit 3', title: 'Look at me', topic: '看着我' },
-  { id: 4, number: 'Unit 4', title: 'We love animals', topic: '我们爱动物' },
-  { id: 5, number: 'Unit 5', title: 'Let\'s eat', topic: '让我们吃' },
-  { id: 6, number: 'Unit 6', title: 'Happy birthday', topic: '生日快乐' }
-]
+// 从路由参数获取课本 ID
+const bookId = computed(() => route.query.book || 1)
+
+// 响应式数据
+const units = ref([])
+const bookName = ref('')
+const loading = ref(true)
+const error = ref('')
+
+/**
+ * 获取单元列表数据
+ */
+const fetchUnits = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await request.get(`/units/${bookId.value}`)
+    if (res.code === 200) {
+      bookName.value = res.data.bookName
+      units.value = res.data.units
+    } else {
+      error.value = res.message || '获取数据失败'
+    }
+  } catch (err) {
+    error.value = err.message || '网络异常，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
 
 /**
  * 返回上一页
@@ -60,6 +92,9 @@ const goBack = () => {
 const goToReader = (unit) => {
   router.push({ path: '/reader', query: { unit: unit.id, title: unit.title } })
 }
+
+// 组件挂载时获取数据
+onMounted(fetchUnits)
 </script>
 
 <style scoped>
@@ -202,5 +237,39 @@ const goToReader = (unit) => {
   font-size: 14px;
   color: #667eea;
   margin-left: 2px;
+}
+
+/* 加载中状态 */
+.loading {
+  text-align: center;
+  padding: 60px 0;
+  font-size: 14px;
+  color: #999;
+}
+
+/* 错误状态 */
+.error {
+  text-align: center;
+  padding: 60px 0;
+  color: #e74c3c;
+}
+
+.error p {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.retry-btn {
+  padding: 8px 24px;
+  background: #667eea;
+  color: #fff;
+  border-radius: 20px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+}
+
+.retry-btn:active {
+  background: #5568d3;
 }
 </style>
