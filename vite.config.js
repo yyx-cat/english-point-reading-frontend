@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
 // 后端服务器地址
-const backendTarget = 'http://192.168.1.106:8080'
+const backendTarget = 'http://192.168.1.108:8080'
 
 // https://vite.dev/config/
 export default defineConfig({

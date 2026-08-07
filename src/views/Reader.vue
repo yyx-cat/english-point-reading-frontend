@@ -20,6 +20,24 @@
     </div>
 
     <template v-else>
+      <!-- 模式切换：课文 / 单词 -->
+      <div class="mode-switch">
+        <button
+          class="mode-btn"
+          :class="{ active: mode === 'sentence' }"
+          @click="switchMode('sentence')"
+        >
+          课文
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: mode === 'word' }"
+          @click="switchMode('word')"
+        >
+          单词
+        </button>
+      </div>
+
       <!-- 音频控制条 -->
       <div class="audio-bar">
         <!-- 播放控制 -->
@@ -77,10 +95,10 @@
         </div>
       </div>
 
-      <!-- 句子列表 -->
-      <div class="sentence-list" ref="listRef">
+      <!-- 列表区域（课文/单词共用） -->
+      <div class="sentence-list" :class="{ 'word-mode': mode === 'word' }" ref="listRef">
         <div
-          v-for="(sentence, index) in sentences"
+          v-for="(item, index) in items"
           :key="index"
           class="sentence-block"
           :class="{ active: currentIndex === index }"
@@ -90,13 +108,13 @@
           <div class="sentence-number">{{ index + 1 }}</div>
           <div class="sentence-content">
             <!-- 仅英文模式 -->
-            <p v-if="displayMode === 'en'" class="sentence-text">{{ sentence.text }}</p>
+            <p v-if="displayMode === 'en'" class="sentence-text">{{ item.text }}</p>
             <!-- 仅中文模式 -->
-            <p v-else-if="displayMode === 'zh'" class="sentence-text">{{ sentence.zh || '（暂无翻译）' }}</p>
+            <p v-else-if="displayMode === 'zh'" class="sentence-text">{{ item.zh || '（暂无翻译）' }}</p>
             <!-- 双语模式 -->
             <template v-else>
-              <p class="sentence-text">{{ sentence.text }}</p>
-              <p v-if="sentence.zh" class="sentence-zh">{{ sentence.zh }}</p>
+              <p class="sentence-text">{{ item.text }}</p>
+              <p v-if="item.zh" class="sentence-zh">{{ item.zh }}</p>
             </template>
           </div>
           <div class="sentence-play" v-if="currentIndex === index && isPlaying">
@@ -131,8 +149,8 @@ const route = useRoute()
 const unitId = computed(() => route.query.unit || 1)
 const unitTitle = computed(() => route.query.title || 'Unit 1')
 
-// 响应式数据
-const sentences = ref([])
+// 响应式数据（课文/单词统一用 items）
+const items = ref([])
 const audioUrl = ref('')
 const loading = ref(true)
 const error = ref('')
@@ -145,6 +163,9 @@ const isPlaying = ref(false)
 const currentIndex = ref(0)
 const currentSpeed = ref('1.0')
 const speeds = ['0.5', '0.75', '1.0', '1.25', '1.5']
+
+// 内容模式：'sentence' 课文, 'word' 单词
+const mode = ref('sentence')
 
 // 语言显示模式：'en' 仅英文, 'zh' 仅中文, 'both' 双语
 const displayMode = ref('both')
@@ -166,30 +187,35 @@ const listRef = ref(null)
 let timeUpdateCallback = null
 
 /**
- * 获取课文内容数据
+ * 获取内容数据（课文或单词）
+ * 根据 mode 请求不同接口，返回数据结构一致
  */
 const fetchContent = async () => {
   loading.value = true
   error.value = ''
   try {
-    const res = await request.get(`/content/${unitId.value}`)
+    // 根据模式选择接口：课文用 /content，单词用 /words
+    const apiPath = mode.value === 'word'
+      ? `/words/${unitId.value}`
+      : `/content/${unitId.value}`
+    const res = await request.get(apiPath)
     if (res.code === 200) {
       const data = res.data
       audioUrl.value = data.audioUrl
       totalDuration.value = data.totalDuration || 0
       totalTimeLabel.value = formatTime(totalDuration.value)
-      // 为每个句子计算 endTime，并保留中英文字段
-      const rawSentences = data.sentences || []
-      sentences.value = rawSentences.map((s, i) => ({
+      // 为每个条目计算 endTime，并保留中英文字段
+      const rawItems = data.sentences || data.words || []
+      items.value = rawItems.map((s, i) => ({
         ...s,
-        // 英文句子
+        // 英文内容
         text: s.text || '',
         // 中文翻译（后端字段为 translation）
         zh: s.translation || '',
         // 播放时间
         startTime: s.startTime,
-        endTime: s.endTime || (i < rawSentences.length - 1
-          ? rawSentences[i + 1].startTime
+        endTime: s.endTime || (i < rawItems.length - 1
+          ? rawItems[i + 1].startTime
           : totalDuration.value)
       }))
     } else {
@@ -249,7 +275,7 @@ const handleTimeUpdate = (currentTimeMs) => {
  * @returns {number} 句子索引，未找到返回 -1
  */
 const findSentenceIndex = (timeMs) => {
-  const list = sentences.value
+  const list = items.value
   for (let i = 0; i < list.length; i++) {
     if (timeMs >= list[i].startTime && timeMs < list[i].endTime) {
       return i
@@ -299,7 +325,7 @@ const cleanupListeners = () => {
  * @param {number} index - 句子索引
  */
 const handleSentenceClick = (index) => {
-  const sentence = sentences.value[index]
+  const sentence = items.value[index]
   if (!sentence || !audioUrl.value) return
 
   // 先停止旧播放，再播放新片段
@@ -330,7 +356,7 @@ const togglePlay = () => {
   } else {
     if (audioUrl.value) {
       // 如果没有在播放任何内容，从当前句子开始
-      if (getCurrentTime() === 0 || getCurrentTime() < sentences.value[currentIndex.value]?.startTime) {
+      if (getCurrentTime() === 0 || getCurrentTime() < items.value[currentIndex.value]?.startTime) {
         handleSentenceClick(currentIndex.value)
       } else {
         resumeAudio()
@@ -353,7 +379,7 @@ const prevSentence = () => {
  * 下一句
  */
 const nextSentence = () => {
-  if (currentIndex.value < sentences.value.length - 1) {
+  if (currentIndex.value < items.value.length - 1) {
     handleSentenceClick(currentIndex.value + 1)
   }
 }
@@ -365,6 +391,29 @@ const nextSentence = () => {
 const changeSpeed = (speed) => {
   currentSpeed.value = speed
   setPlaybackRate(parseFloat(speed))
+}
+
+/**
+ * 切换内容模式（课文/单词）
+ * 切换时停止播放、清空高亮、重新请求数据
+ * @param {string} newMode - 目标模式：'sentence' 或 'word'
+ */
+const switchMode = async (newMode) => {
+  if (mode.value === newMode) return
+  // 停止当前播放并清理监听
+  stopAudio()
+  cleanupListeners()
+  // 重置播放状态
+  isPlaying.value = false
+  currentIndex.value = 0
+  currentTimeLabel.value = '00:00'
+  progress.value = 0
+  // 清空旧数据
+  items.value = []
+  // 切换模式
+  mode.value = newMode
+  // 重新获取数据
+  await fetchContent()
 }
 
 // 监听路由参数变化，当 unit 变化时重新获取数据
@@ -446,6 +495,34 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: #333;
   margin: 0;
+}
+
+/* 模式切换 */
+.mode-switch {
+  display: flex;
+  background: #fff;
+  padding: 8px 16px;
+  gap: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 14px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
 /* 音频控制条 */
@@ -621,6 +698,24 @@ onBeforeUnmount(() => {
   width: 100%;
   box-sizing: border-box;
   overflow-y: auto;
+}
+
+/* 单词模式：更紧凑的布局 */
+.sentence-list.word-mode {
+  gap: 6px;
+}
+
+.sentence-list.word-mode .sentence-block {
+  padding: 10px 14px;
+}
+
+.sentence-list.word-mode .sentence-text {
+  font-size: 15px;
+}
+
+.sentence-list.word-mode .sentence-zh {
+  font-size: 13px;
+  margin-top: 2px;
 }
 
 /* 句子块 */
