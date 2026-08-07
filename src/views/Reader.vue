@@ -59,6 +59,22 @@
             </button>
           </div>
         </div>
+
+        <!-- 语言显示模式切换 -->
+        <div class="lang-control">
+          <span class="lang-label">显示</span>
+          <div class="lang-options">
+            <button
+              v-for="m in displayModes"
+              :key="m.value"
+              class="lang-btn"
+              :class="{ active: displayMode === m.value }"
+              @click="displayMode = m.value"
+            >
+              {{ m.label }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 句子列表 -->
@@ -73,8 +89,15 @@
         >
           <div class="sentence-number">{{ index + 1 }}</div>
           <div class="sentence-content">
-            <p class="sentence-en">{{ sentence.en }}</p>
-            <p class="sentence-zh">{{ sentence.zh }}</p>
+            <!-- 仅英文模式 -->
+            <p v-if="displayMode === 'en'" class="sentence-text">{{ sentence.text }}</p>
+            <!-- 仅中文模式 -->
+            <p v-else-if="displayMode === 'zh'" class="sentence-text">{{ sentence.zh || '（暂无翻译）' }}</p>
+            <!-- 双语模式 -->
+            <template v-else>
+              <p class="sentence-text">{{ sentence.text }}</p>
+              <p v-if="sentence.zh" class="sentence-zh">{{ sentence.zh }}</p>
+            </template>
           </div>
           <div class="sentence-play" v-if="currentIndex === index && isPlaying">
             <span class="playing-animation">🔊</span>
@@ -86,7 +109,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import request from '../utils/request'
 import {
@@ -123,6 +146,14 @@ const currentIndex = ref(0)
 const currentSpeed = ref('1.0')
 const speeds = ['0.5', '0.75', '1.0', '1.25', '1.5']
 
+// 语言显示模式：'en' 仅英文, 'zh' 仅中文, 'both' 双语
+const displayMode = ref('both')
+const displayModes = [
+  { value: 'en', label: '仅英文' },
+  { value: 'zh', label: '仅中文' },
+  { value: 'both', label: '双语' }
+]
+
 // 时间显示
 const currentTimeLabel = ref('00:00')
 const totalTimeLabel = ref('00:00')
@@ -147,14 +178,19 @@ const fetchContent = async () => {
       audioUrl.value = data.audioUrl
       totalDuration.value = data.totalDuration || 0
       totalTimeLabel.value = formatTime(totalDuration.value)
-      // 为每个句子计算 endTime（使用下一句的 time 或音频总时长）
+      // 为每个句子计算 endTime，并保留中英文字段
       const rawSentences = data.sentences || []
       sentences.value = rawSentences.map((s, i) => ({
         ...s,
-        startTime: s.time,
-        endTime: i < rawSentences.length - 1
-          ? rawSentences[i + 1].time
-          : totalDuration.value
+        // 英文句子
+        text: s.text || '',
+        // 中文翻译（后端字段为 translation）
+        zh: s.translation || '',
+        // 播放时间
+        startTime: s.startTime,
+        endTime: s.endTime || (i < rawSentences.length - 1
+          ? rawSentences[i + 1].startTime
+          : totalDuration.value)
       }))
     } else {
       error.value = res.message || '获取数据失败'
@@ -330,6 +366,25 @@ const changeSpeed = (speed) => {
   currentSpeed.value = speed
   setPlaybackRate(parseFloat(speed))
 }
+
+// 监听路由参数变化，当 unit 变化时重新获取数据
+watch(
+  () => route.query.unit,
+  async (newUnitId) => {
+    if (newUnitId) {
+      // 先停止旧播放并清理监听
+      stopAudio()
+      cleanupListeners()
+      // 重置播放状态
+      isPlaying.value = false
+      currentIndex.value = 0
+      currentTimeLabel.value = '00:00'
+      progress.value = 0
+      // 重新获取数据
+      await fetchContent()
+    }
+  }
+)
 
 // 组件挂载时获取数据
 onMounted(async () => {
@@ -519,6 +574,41 @@ onBeforeUnmount(() => {
   border-color: #667eea;
 }
 
+/* 语言显示模式控制 */
+.lang-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.lang-label {
+  font-size: 12px;
+  color: #999;
+}
+
+.lang-options {
+  display: flex;
+  gap: 4px;
+}
+
+.lang-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 12px;
+  cursor: pointer;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.lang-btn.active {
+  background: #52c41a;
+  color: #fff;
+  border-color: #52c41a;
+}
+
 /* 句子列表 */
 .sentence-list {
   flex: 1;
@@ -586,7 +676,7 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.sentence-en {
+.sentence-text {
   font-size: 16px;
   font-weight: 500;
   color: #333;
@@ -594,14 +684,14 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-.sentence-block.active .sentence-en {
+.sentence-block.active .sentence-text {
   color: #d48806;
 }
 
 .sentence-zh {
-  font-size: 13px;
-  color: #999;
-  margin: 0;
+  font-size: 14px;
+  color: #888;
+  margin: 4px 0 0;
   line-height: 1.4;
 }
 

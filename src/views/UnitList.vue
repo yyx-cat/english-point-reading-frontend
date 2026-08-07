@@ -27,10 +27,10 @@
         class="unit-card"
         @click="goToReader(unit)"
       >
-        <div class="unit-number">{{ unit.number }}</div>
+        <div class="unit-number">{{ unit.unitNo }}</div>
         <div class="unit-content">
           <h2 class="unit-title">{{ unit.title }}</h2>
-          <p class="unit-topic">{{ unit.topic }}</p>
+          <p v-if="unit.titleZh" class="unit-title-zh">{{ unit.titleZh }}</p>
         </div>
         <div class="unit-action">
           <span class="play-icon">▶</span>
@@ -66,8 +66,16 @@ const fetchUnits = async () => {
   try {
     const res = await request.get(`/units/${bookId.value}`)
     if (res.code === 200) {
-      bookName.value = res.data.bookName
-      units.value = res.data.units
+      // 后端返回数组格式：[{id, unitNo, title, sortOrder}]
+      if (Array.isArray(res.data)) {
+        units.value = res.data
+        // 如果有 units[0].title，提取课本名称作为标题
+        bookName.value = res.data.length > 0 ? `课本 ${bookId.value}` : '单元列表'
+      } else {
+        // 兼容旧格式：{ bookName, units }
+        bookName.value = res.data.bookName || '单元列表'
+        units.value = res.data.units || []
+      }
     } else {
       error.value = res.message || '获取数据失败'
     }
@@ -210,7 +218,7 @@ onMounted(fetchUnits)
   margin: 0;
 }
 
-.unit-topic {
+.unit-title-zh {
   font-size: 13px;
   color: #999;
   margin: 0;

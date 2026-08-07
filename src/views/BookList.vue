@@ -24,12 +24,12 @@
         class="book-card"
         @click="goToUnits(book)"
       >
-        <div class="book-cover" :style="{ background: book.coverColor }">
-          <span class="book-emoji">{{ book.emoji }}</span>
+        <div class="book-cover">
+          <span class="book-icon">📚</span>
         </div>
         <div class="book-info">
-          <h2 class="book-name">{{ book.name }}</h2>
-          <p class="book-desc">{{ book.desc }}</p>
+          <h2 class="book-name">{{ book.fullName }}</h2>
+          <p class="book-desc">{{ book.version }}</p>
           <span class="book-arrow">进入 →</span>
         </div>
       </div>
@@ -144,9 +144,10 @@ onMounted(fetchBooks)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
-.book-emoji {
+.book-icon {
   font-size: 36px;
 }
 

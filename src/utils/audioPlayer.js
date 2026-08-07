@@ -8,11 +8,13 @@ let audio = null
 
 // 模块级监听器引用（用于 stop 时移除）
 let canPlayHandler = null
-let endedHandler = null
 
 // timeupdate 回调列表
 let timeUpdateCallbacks = []
 let timeUpdateHandler = null
+
+// 用户注册的 ended 回调列表
+let endedCallbacks = []
 
 /**
  * 获取全局唯一的 Audio 对象
@@ -52,14 +54,7 @@ export function playSegment(audioUrl, startTime = 0) {
     ensureTimeUpdateHandler()
   }
 
-  // 播放结束释放资源
-  endedHandler = () => {
-    player.removeAttribute('src')
-    player.load()
-  }
-
   player.addEventListener('canplay', canPlayHandler, { once: true })
-  player.addEventListener('ended', endedHandler, { once: true })
 }
 
 /**
@@ -83,6 +78,26 @@ function ensureTimeUpdateHandler() {
 }
 
 /**
+ * 确保 ended 事件处理器已注册（用于通知用户注册的回调）
+ */
+function ensureEndedHandler() {
+  if (!audio) return
+  const handler = () => {
+    // 通知所有注册的 ended 回调
+    endedCallbacks.forEach((cb) => {
+      try {
+        cb()
+      } catch (e) {
+        console.error('ended callback error:', e)
+      }
+    })
+  }
+  audio.addEventListener('ended', handler)
+  // 保存为全局引用以便清理
+  audio._endedInternalHandler = handler
+}
+
+/**
  * 停止当前播放并释放资源
  */
 export function stop() {
@@ -92,14 +107,15 @@ export function stop() {
       audio.removeEventListener('canplay', canPlayHandler)
       canPlayHandler = null
     }
-    if (endedHandler) {
-      audio.removeEventListener('ended', endedHandler)
-      endedHandler = null
-    }
     // 移除 timeupdate 监听
     if (timeUpdateHandler) {
       audio.removeEventListener('timeupdate', timeUpdateHandler)
       timeUpdateHandler = null
+    }
+    // 移除内部 ended 处理器
+    if (audio._endedInternalHandler) {
+      audio.removeEventListener('ended', audio._endedInternalHandler)
+      audio._endedInternalHandler = null
     }
     audio.pause()
     audio.currentTime = 0
@@ -169,8 +185,27 @@ export function setPlaybackRate(rate) {
  * @param {Function} callback - 播放结束时的回调函数
  */
 export function onEnded(callback) {
-  if (audio && typeof callback === 'function') {
-    audio.addEventListener('ended', callback)
+  if (typeof callback === 'function') {
+    endedCallbacks.push(callback)
+    // 确保内部 ended 处理器已注册
+    ensureEndedHandler()
+  }
+}
+
+/**
+ * 移除指定的播放结束回调
+ * @param {Function} callback - 要移除的回调函数引用；若不传则清空所有回调
+ */
+export function offEnded(callback) {
+  if (callback) {
+    endedCallbacks = endedCallbacks.filter((cb) => cb !== callback)
+  } else {
+    endedCallbacks = []
+  }
+  // 如果没有任何回调了，移除内部处理器
+  if (endedCallbacks.length === 0 && audio && audio._endedInternalHandler) {
+    audio.removeEventListener('ended', audio._endedInternalHandler)
+    audio._endedInternalHandler = null
   }
 }
 
